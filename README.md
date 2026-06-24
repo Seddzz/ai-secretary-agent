@@ -95,6 +95,55 @@ uvicorn telephony.server:app --reload --port 8000
 
 Une fois les 4 process actifs, ouvrir **http://localhost:8000** dans le navigateur, autoriser le micro, et parler. Après une pause de silence (~2 secondes), le pipeline transcrit la phrase (Whisper), génère une réponse (Ollama), la synthétise en audio (Piper) et la diffuse vers le navigateur. L'audio de l'agent est audible via les haut-parleurs. Si l'appelant parle pendant la réponse de l'agent (barge-in), celle-ci est interrompue automatiquement.
 
+## Intégrations métier — Phase 6 (n8n self-hosted)
+
+À la fin de chaque appel, l'agent envoie un webhook au workflow n8n qui déclenche 3 actions.
+
+### 1. Lancer n8n
+
+```bash
+docker compose up     # n8n démarre sur http://localhost:5678
+```
+Premier accès : créer un compte admin local (gratuit, stocké dans `n8n_data`).
+
+### 2. Importer le workflow
+
+Dans n8n → **Workflows** → **Import from File** → `integrations/n8n_workflow.json`.
+
+Le workflow :
+```
+Webhook (/webhook/appel-secrétaire)
+        │
+        ▼
+  Préparer données (code)
+        │
+   ┌────┼────────────┬──────────────┐
+   ▼    ▼            ▼              ▼
+Google   Google      Email récap
+Sheets   Calendar    (Gmail)
+(CRM)    (si urgence)
+```
+
+### 3. Connecter les credentials Google (obligatoire)
+
+n8n ne stocke jamais les credentials dans le JSON exporté — il faut les créer dans l'UI :
+
+1. **Settings → Credentials → Add** → choisir *Google Sheets OAuth2 API*, *Google Calendar OAuth2 API*, *Gmail OAuth2 API*.
+2. Suivre l'auth Google OAuth (compte Google gratuit, quota largement suffisant pour un prototype).
+3. Dans chaque nœud du workflow (CRM, Agenda, Email), sélectionner le credential correspondant dans le menu déroulant.
+4. Dans le nœud **CRM (Google Sheets)**, remplacer `REMPLACER_PAR_ID_DU_GOOGLE_SHEET` par l'ID de votre Google Sheet (son onglet doit s'appeler `Appels` avec colonnes : nom, numéro, motif, urgence, service, statut, résumé, date).
+
+### 4. Variable d'environnement
+
+Le webhook est déclenché automatiquement si `N8N_WEBHOOK_URL` est défini dans `.env` :
+```
+N8N_WEBHOOK_URL=http://localhost:5678/webhook/appel-secrétaire
+EMAIL_DESTINATAIRE=responsable@acme-conseil.ma
+```
+Si la variable est absente, l'intégration est désactivée (silencieusement) — l'appel reste sauvé en SQLite.
+
+> Le webhook est **non bloquant** : si n8n est arrêté ou injoignable, l'agent continue de fonctionner normalement et journalise juste un avertissement.
+
 ## Structure du projet
 
 ```
@@ -110,7 +159,9 @@ ai-secretary-agent/
 │   └── scenarios.md        # Définition des scénarios conversationnels
 ├── db/
 │   └── models.py           # Persistance SQLite + export CSV
-├── docker-compose.yml      # Serveur LiveKit
+├── integrations/
+│   └── n8n_workflow.json   # Workflow n8n (webhook + Sheets + Calendar + Gmail)
+├── docker-compose.yml      # LiveKit + n8n + Postgres
 ├── voices/                 # Modèles Piper TTS (téléchargés, non versionnés)
 ├── .env                    # Variables d'environnement (non versionné)
 └── README.md
@@ -131,7 +182,9 @@ ai-secretary-agent/
 - ✅ Base de connaissances FAQ (JSON + recherche par similarité lexicale)
 - ✅ Transfert simulé vers un humain (second participant LiveKit + page collaborateur)
 - ✅ Persistance de l'historique des appels (SQLite + export CSV)
-- ⬜ Intégrations métier (agenda, CRM, email via n8n) — Phase 6
+- ✅ Intégrations métier (agenda, CRM, email via n8n self-hosted) — Phase 6
+- ⬜ Tests et mesure de performance — Phase 8
+- ⬜ Documentation finale + slides — Phase 9
 
 ## Endpoints & outils
 

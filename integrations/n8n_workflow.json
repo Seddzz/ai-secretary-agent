@@ -1,0 +1,198 @@
+{
+  "name": "Secrétaire IA — Post-appel (CRM + Agenda + Email)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "appel-secrétaire",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook-entree",
+      "name": "Webhook (Agent IA)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "appel-secretaire-ia",
+      "notes": "Reçoit le payload JSON de bot.py à la fin de chaque appel.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Valide et structure le payload reçu de l'agent IA.\n// Échoue proprement si un champ critique manque.\nconst data = $input.first().json;\nconst body = data.body || data;\n\nconst record = {\n  nom: body.nom_appelant || 'Inconnu',\n  numero: body.numero || 'Non fourni',\n  motif: body.motif || 'Non précisé',\n  resume: body.resume_demande || body.resume || '',\n  urgence: body.urgence || 'normale',\n  service: body.service || '',\n  statut: body.statut || 'termine',\n  transfere: body.transfere || false,\n  duree_sec: body.duree_approx_sec || 0,\n  date_appel: body.date_appel || new Date().toISOString(),\n  messages: body.messages || []\n};\n\n// Raccourci pour le CRM : résumé en une ligne\nrecord.ligne_crm = `[${record.urgence.toUpperCase()}] ${record.nom} (${record.numero}) — ${record.motif}${record.resume ? ' : ' + record.resume : ''}`;\n\nreturn [{ json: record }];"
+      },
+      "id": "set-payload",
+      "name": "Préparer données",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300],
+      "notes": "Normalise le payload en un record structuré.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "REMPLACER_PAR_ID_DU_GOOGLE_SHEET",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Appels",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "google-sheets-crm",
+      "name": "CRM (Google Sheets)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [700, 180],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "A_CONNECTER_DANS_N8N",
+          "name": "Google Sheets account"
+        }
+      },
+      "notes": "Ajoute une ligne dans le Google Sheet CRM. À configurer : ID du sheet + connexion OAuth Google.",
+      "notesInFlow": true,
+      "retryOnFail": false
+    },
+    {
+      "parameters": {
+        "calendar": {
+          "__rl": true,
+          "value": "primary",
+          "mode": "name"
+        },
+        "start": "={{ $now.plus({days: 1}).set({hour: 10, minute: 0}).toISO() }}",
+        "end": "={{ $now.plus({days: 1}).set({hour: 10, minute: 30}).toISO() }}",
+        "summary": "=Rappel : {{ $json.nom }} — {{ $json.motif }}",
+        "description": "=Appel reçu le {{ $json.date_appel }}\\nNuméro : {{ $json.numero }}\\nUrgence : {{ $json.urgence }}\\n\\nRésumé :\\n{{ $json.resume }}",
+        "location": "",
+        "attendees": ""
+      },
+      "id": "google-calendar",
+      "name": "Agenda (Google Calendar)",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 3,
+      "position": [700, 380],
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "A_CONNECTER_DANS_N8N",
+          "name": "Google Calendar account"
+        }
+      },
+      "notes": "Crée un événement 'rappel' J+1 10h. Seulement si urgence != basse (voir Switch ci-dessous).",
+      "notesInFlow": true,
+      "retryOnFail": false
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "=// Email récapitulatif au format HTML\n{\n  \"sujet\": \"📞 Nouvel appel reçu — {{ $json.nom }}\",\n  \"corps_html\": \"<h2>📞 Nouvel appel traité par le secrétaire IA</h2>\"\n    + \"<table style='border-collapse:collapse'>\"\n    + \"<tr><td style='padding:4px 12px;font-weight:bold'>Nom</td><td>\" + $json.nom + \"</td></tr>\"\n    + \"<tr><td style='padding:4px 12px;font-weight:bold'>Numéro</td><td>\" + $json.numero + \"</td></tr>\"\n    + \"<tr><td style='padding:4px 12px;font-weight:bold'>Motif</td><td>\" + $json.motif + \"</td></tr>\"\n    + \"<tr><td style='padding:4px 12px;font-weight:bold'>Urgence</td><td>\" + $json.urgence + \"</td></tr>\"\n    + \"<tr><td style='padding:4px 12px;font-weight:bold'>Statut</td><td>\" + ($json.transfere ? 'TRANSFÉRÉ → ' + $json.service : 'Terminé') + \"</td></tr>\"\n    + \"<tr><td style='padding:4px 12px;font-weight:bold'>Durée</td><td>\" + $json.duree_sec + \" sec</td></tr>\"\n    + \"</table>\"\n    + \"<h3>Résumé de la demande</h3><p>\" + ($json.resume || 'N/A') + \"</p>\"\n    + \"<hr><p style='color:#888;font-size:12px'>Email automatique généré par l'agent IA secrétaire.</p>\"\n}"
+      },
+      "id": "email-payload",
+      "name": "Préparer email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [940, 300],
+      "notes": "Construit le sujet + corps HTML de l'email récap.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "fromEmail": "secretaire.ia@acme-conseil.ma",
+        "toEmail": "={{ $env.EMAIL_DESTINATAIRE || 'responsable@acme-conseil.ma' }}",
+        "subject": "={{ $json.sujet }}",
+        "emailFormat": "html",
+        "message": "={{ $json.corps_html }}",
+        "options": {}
+      },
+      "id": "gmail-envoi",
+      "name": "Email récap (Gmail)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [1180, 300],
+      "credentials": {
+        "gmailOAuth2Api": {
+          "id": "A_CONNECTER_DANS_N8N",
+          "name": "Gmail account"
+        }
+      },
+      "notes": "Envoie l'email récap au responsable. Connexion Gmail OAuth requise.",
+      "notesInFlow": true,
+      "retryOnFail": false
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "cond-urgence",
+              "leftValue": "={{ $json.urgence }}",
+              "rightValue": "basse",
+              "operator": { "type": "string", "operation": "notEquals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "switch-urgence",
+      "name": "Urgence > basse ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [940, 180],
+      "notes": "Ne crée un event agenda que si l'urgence n'est pas 'basse'.",
+      "notesInFlow": true
+    }
+  ],
+  "connections": {
+    "Webhook (Agent IA)": {
+      "main": [
+        [
+          { "node": "Préparer données", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Préparer données": {
+      "main": [
+        [
+          { "node": "CRM (Google Sheets)", "type": "main", "index": 0 },
+          { "node": "Agenda (Google Calendar)", "type": "main", "index": 0 },
+          { "node": "Email récap (Gmail)", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "CRM (Google Sheets)": {
+      "main": [
+        []
+      ]
+    },
+    "Agenda (Google Calendar)": {
+      "main": [
+        []
+      ]
+    },
+    "Email récap (Gmail)": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Africa/Casablanca"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "instanceId": "local-dev"
+  },
+  "tags": [
+    { "name": "secrétaire-ia" }
+  ]
+}

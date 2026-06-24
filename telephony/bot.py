@@ -329,6 +329,51 @@ async def main():
         except Exception as e:
             logger.error(f"[DB] Erreur sauvegarde: {e}")
 
+    # --- Phase 6 : Webhook vers n8n (CRM + Agenda + Email) ---
+    async def _trigger_n8n_webhook(statut: str, transfere: bool) -> None:
+        """
+        Phase 6 — Envoie le récapitulatif de l'appel au workflow n8n (self-hosted).
+        n8n déclenche ensuite : Google Sheets (CRM), Google Calendar (si urgence),
+        Gmail (email récap). Échec non bloquant : l'appel reste sauvé en SQLite.
+        """
+        webhook_url = os.getenv("N8N_WEBHOOK_URL")
+        if not webhook_url:
+            logger.info("[n8n] N8N_WEBHOOK_URL non configuré — webhook ignoré.")
+            return
+
+        payload = {
+            "nom_appelant": call_ctx.nom_appelant,
+            "numero": call_ctx.numero,
+            "motif": call_ctx.motif,
+            "resume_demande": call_ctx.resume_demande or call_ctx.motif,
+            "urgence": call_ctx.urgence or "normale",
+            "service": call_ctx.service_cible,
+            "statut": statut,
+            "transfere": transfere,
+            "duree_approx_sec": int((datetime.now() - call_start).total_seconds()),
+            "date_appel": datetime.now().isoformat(),
+            "messages": call_ctx.messages,
+        }
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    webhook_url,
+                    json=payload,
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as resp:
+                    if resp.status < 300:
+                        logger.info(f"[n8n] Webhook envoyé (HTTP {resp.status}).")
+                    else:
+                        logger.warning(f"[n8n] Webhook HTTP {resp.status}.")
+        except Exception as e:
+            logger.warning(f"[n8n] Webhook échoué (non bloquant): {e}")
+
+    async def _finalize_call(statut: str, transfere: bool = False) -> None:
+        """Phase 6+7 — Sauvegarde SQLite + déclenche le webhook n8n."""
+        _save_call(statut, transfere)
+        await _trigger_n8n_webhook(statut, transfere)
+
     # --- Phase 5 : Transfert simulé vers un collaborateur LiveKit ---
     async def _handle_transfer(service: str) -> None:
         """
@@ -375,8 +420,8 @@ async def main():
             f"messages={len(call_ctx.messages)}"
         )
 
-        # Phase 7 — Sauvegarde en base
-        _save_call(statut="transfere", transfere=True)
+        # Phase 6+7 — Sauvegarde base + webhook n8n
+        await _finalize_call(statut="transfere", transfere=True)
 
         # L'agent quitte la room après un court délai (laisse le TTS finir)
         await asyncio.sleep(1)
@@ -599,9 +644,9 @@ async def main():
     try:
         await asyncio.sleep(3600)
     finally:
-        # Sauvegarde l'appel en base si on quitte sans transfert
-        if not call_ctx.transfer_effectue:
-            _save_call(statut="raccroche")
+        # Phase 6+7 — Sauvegarde base + webhook n8n si on quitte sans transfert
+        if not call_ctx.transfer_effectue and chat_history:
+            await _finalize_call(statut="raccroche")
         for task in list(active_audio_tasks):
             task.cancel()
         if active_audio_tasks:
