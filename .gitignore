@@ -1,0 +1,7 @@
+voices/
+__pycache__/
+*.pyc
+.env
+.venv/
+db/*.db
+db/*.csv

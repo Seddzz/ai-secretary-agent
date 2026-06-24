@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>Collaborateur — Espace prise d'appel</title>
+    <script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js"></script>
+    <style>
+        body { font-family: sans-serif; padding: 2rem; max-width: 700px; margin: auto; }
+        h1 { color: #2563eb; }
+        #status { margin-top: 1rem; padding: 1rem; background: #f0f0f0; border-radius: 8px; white-space: pre-line; }
+        .service-btn { display: inline-block; padding: 12px 24px; margin: 8px; font-size: 16px;
+                       cursor: pointer; border: 2px solid #2563eb; border-radius: 8px;
+                       background: white; color: #2563eb; }
+        .service-btn:hover { background: #2563eb; color: white; }
+        .service-btn.active { background: #2563eb; color: white; }
+        button.disconnect { background: #dc2626; color: white; border-color: #dc2626; }
+        button.disconnect:hover { background: #b91c1c; }
+        #context { margin-top: 1rem; padding: 1rem; background: #fffbeb; border: 1px solid #f59e0b;
+                   border-radius: 8px; font-size: 14px; }
+        #context h3 { margin-top: 0; }
+    </style>
+</head>
+<body>
+    <h1>🧑‍💼 Espace Collaborateur</h1>
+    <p>Rejoignez un service pour prendre un appel transféré par l'agent IA.</p>
+
+    <div>
+        <button class="service-btn" onclick="joinService('accueil')">Accueil</button>
+        <button class="service-btn" onclick="joinService('commercial')">Commercial</button>
+        <button class="service-btn" onclick="joinService('technique')">Technique</button>
+        <button class="service-btn" onclick="joinService('administratif')">Administratif</button>
+    </div>
+
+    <div id="status">Statut: Non connecté. Choisissez un service ci-dessus.</div>
+    <div id="context" style="display:none">
+        <h3>📋 Contexte de l'appel (transmis par l'agent IA)</h3>
+        <pre id="context-data"></pre>
+    </div>
+    <audio id="remoteAudio" autoplay></audio>
+
+    <script>
+        const statusDiv = document.getElementById('status');
+        const remoteAudio = document.getElementById('remoteAudio');
+        const contextDiv = document.getElementById('context');
+        const contextData = document.getElementById('context-data');
+        let room = null;
+        let currentService = '';
+
+        async function joinService(serviceName) {
+            if (room && room.state === 'connected') {
+                await room.disconnect();
+            }
+
+            currentService = serviceName;
+            const roomName = `accueil-${serviceName}`;
+            statusDiv.innerText = `Statut: Connexion au service ${serviceName} (room: ${roomName})...`;
+
+            try {
+                const res = await fetch(`/token?participant_name=collaborateur_${serviceName}&room_name=${roomName}`);
+                const data = await res.json();
+
+                room = new LivekitClient.Room();
+
+                room.on('trackSubscribed', (track, publication, participant) => {
+                    if (track.kind === LivekitClient.Track.Kind.Audio) {
+                        track.attach(remoteAudio);
+                        statusDiv.innerText += `\n🔊 Audio reçu de ${participant.identity}`;
+                    }
+                });
+
+                room.on('participantConnected', participant => {
+                    statusDiv.innerText += `\n👤 ${participant.identity} a rejoint la room.`;
+                });
+
+                room.on('participantDisconnected', participant => {
+                    statusDiv.innerText += `\n👋 ${participant.identity} a quitté la room.`;
+                });
+
+                room.on('dataReceived', payload => {
+                    try {
+                        const ctx = JSON.parse(new TextDecoder().decode(payload));
+                        contextDiv.style.display = 'block';
+                        contextData.innerText = JSON.stringify(ctx, null, 2);
+                        statusDiv.innerText += `\n📋 Contexte reçu de l'appel.`;
+                    } catch(e) {}
+                });
+
+                const wsUrl = `ws://${window.location.hostname}:7880`;
+                await room.connect(wsUrl, data.token);
+                await room.localParticipant.setMicrophoneEnabled(true);
+
+                statusDiv.innerText = `Statut: Connecté au service ${serviceName} (room: ${roomName}).\n🎤 Micro activé. En attente d'appels transférés.`;
+
+                // Highlight active button
+                document.querySelectorAll('.service-btn').forEach(btn => {
+                    btn.classList.toggle('active', btn.textContent.toLowerCase().includes(serviceName));
+                });
+
+            } catch (e) {
+                statusDiv.innerText = `Erreur: ${e.message}`;
+            }
+        }
+
+        async function disconnect() {
+            if (room) {
+                await room.disconnect();
+                statusDiv.innerText = 'Statut: Déconnecté.';
+                contextDiv.style.display = 'none';
+            }
+        }
+    </script>
+</body>
+</html>

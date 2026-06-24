@@ -1,0 +1,57 @@
+{
+  "_meta": {
+    "entreprise": "Acme Conseil",
+    "description": "Base de connaissances FAQ pour le secrétaire IA. Chaque entrée a une question de référence, des mots-clés et une réponse.",
+    "version": "1.0"
+  },
+  "entries": [
+    {
+      "id": "horaires",
+      "question": "Quels sont vos horaires d'ouverture ?",
+      "mots_cles": ["horaires", "ouvert", "ouverture", "fermeture", "heure", "jours"],
+      "reponse": "Nous sommes ouverts du lundi au vendredi, de 9h à 18h. Le samedi de 9h à 13h. Fermé les dimanches et jours fériés."
+    },
+    {
+      "id": "adresse",
+      "question": "Où êtes-vous situés ? Quelle est votre adresse ?",
+      "mots_cles": ["adresse", "situes", "localisation", "ou", "venir", "bureau", "plan"],
+      "reponse": "Notre bureau est situé au 12 Avenue Mohammed V, Casablanca. Vous trouverez un plan sur notre site web."
+    },
+    {
+      "id": "telephone",
+      "question": "Quel est votre numéro de téléphone ?",
+      "mots_cles": ["telephone", "numero", "appeler", "contact", "joindre"],
+      "reponse": "Vous pouvez nous joindre au 05 22 00 00 00 pendant nos horaires d'ouverture."
+    },
+    {
+      "id": "tarifs",
+      "question": "Combien coûtent vos services ? Quels sont vos tarifs ?",
+      "mots_cles": ["tarif", "prix", "cout", "facturation", "combien", "payer"],
+      "reponse": "Nos tarifs dépendent du service demandé. Je peux vous mettre en relation avec notre service commercial pour un devis personnalisé."
+    },
+    {
+      "id": "rendez_vous",
+      "question": "Comment prendre rendez-vous ?",
+      "mots_cles": ["rendez-vous", "rdv", "prendre", "appointment", "creneau", "reserver"],
+      "reponse": "Pour prendre rendez-vous, je peux vous mettre en relation avec notre service commercial qui vous proposera un créneau adapté."
+    },
+    {
+      "id": "sav_technique",
+      "question": "J'ai un problème technique avec votre produit",
+      "mots_cles": ["technique", "probleme", "bug", "panne", "ne fonctionne pas", "sau", "support"],
+      "reponse": "Pour un problème technique, je vais vous transférer vers notre service support qui pourra vous aider."
+    },
+    {
+      "id": "factures",
+      "question": "J'ai une question sur ma facture",
+      "mots_cles": ["facture", "paiement", "reglement", "compte", "devis"],
+      "reponse": "Pour toute question de facturation, je vous transfère vers notre service administratif."
+    },
+    {
+      "id": "recrutement",
+      "question": "Comment postuler ? Avez-vous des offres d'emploi ?",
+      "mots_cles": ["recrutement", "emploi", "postuler", "candidature", "travail", "stage", "cv"],
+      "reponse": "Les candidatures se font par email à recrutement@acme-conseil.ma. Vous pouvez aussi déposer votre CV directement à l'accueil."
+    }
+  ]
+}

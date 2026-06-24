@@ -1,0 +1,23 @@
+services:
+  livekit:
+    image: livekit/livekit-server:latest
+    command: --config /livekit.yaml
+    ports:
+      - "7880:7880"
+      - "7881:7881"
+      - "7882:7882/udp"
+      - "40000-40020:40000-40020/udp"
+    volumes:
+      - ./livekit.yaml:/livekit.yaml
+  db:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=agent_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+volumes:
+  postgres_data:

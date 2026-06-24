@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>Appel Accueil (Simulation Téléphonique)</title>
+    <script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js"></script>
+    <style>
+        body { font-family: sans-serif; padding: 2rem; max-width: 600px; margin: auto; }
+        #status { margin-top: 1rem; padding: 1rem; background: #f0f0f0; border-radius: 8px; white-space: pre-line; }
+        button { padding: 10px 20px; font-size: 16px; cursor: pointer; }
+        .transfer-banner { display: none; margin-top: 1rem; padding: 1rem; background: #dbeafe;
+                          border: 2px solid #2563eb; border-radius: 8px; text-align: center; }
+        .transfer-banner button { background: #2563eb; color: white; border: none; border-radius: 6px; }
+    </style>
+</head>
+<body>
+    <h1>📞 Ligne d'Accueil — AI Secretary</h1>
+    <p>Simulez un appel entrant. Autorisez l'accès au microphone.</p>
+    <button id="connectBtn">📞 Appeler l'accueil</button>
+    <div id="status">Statut: Déconnecté</div>
+    <div id="transferBanner" class="transfer-banner">
+        <strong>🔄 Transfert en cours</strong><br>
+        <span id="transferMsg">L'agent vous transfère. Veuillez patienter...</span>
+        <br><br>
+        <button id="transferBtn">👉 Rejoindre le collaborateur</button>
+    </div>
+    <audio id="remoteAudio" autoplay></audio>
+
+    <script>
+        const connectBtn = document.getElementById('connectBtn');
+        const statusDiv = document.getElementById('status');
+        const remoteAudio = document.getElementById('remoteAudio');
+        const transferBanner = document.getElementById('transferBanner');
+        const transferMsg = document.getElementById('transferMsg');
+        const transferBtn = document.getElementById('transferBtn');
+        let room = null;
+        let targetService = null;
+
+        connectBtn.onclick = async () => {
+            if (room && room.state === 'connected') {
+                await room.disconnect();
+                resetUI();
+                return;
+            }
+
+            try {
+                statusDiv.innerText = "Statut: Connexion...";
+                const roomName = "accueil";
+                const res = await fetch(`/token?participant_name=caller&room_name=${roomName}`);
+                const data = await res.json();
+
+                room = new LivekitClient.Room();
+
+                room.on('trackSubscribed', (track, publication, participant) => {
+                    if (track.kind === LivekitClient.Track.Kind.Audio) {
+                        track.attach(remoteAudio);
+                    }
+                });
+
+                room.on('participantConnected', participant => {
+                    statusDiv.innerText += `\n👤 ${participant.identity} a rejoint`;
+                });
+
+                room.on('participantDisconnected', participant => {
+                    if (participant.identity === 'agent_bot') {
+                        // L'agent a quitté = transfert effectué
+                        if (targetService) {
+                            transferBanner.style.display = 'block';
+                            transferMsg.innerText = `L'agent vous transfère vers le service ${targetService}. Cliquez pour rejoindre le collaborateur.`;
+                        }
+                    }
+                    statusDiv.innerText += `\n👋 ${participant.identity} a quitté`;
+                });
+
+                room.on('dataReceived', payload => {
+                    try {
+                        const ctx = JSON.parse(new TextDecoder().decode(payload));
+                        if (ctx.service) {
+                            targetService = ctx.service;
+                            transferBanner.style.display = 'block';
+                            transferMsg.innerText = `Transfert vers le service ${ctx.service}. L'agent quitte. Cliquez ci-dessous.`;
+                        }
+                    } catch(e) {}
+                });
+
+                const wsUrl = `ws://${window.location.hostname}:7880`;
+                await room.connect(wsUrl, data.token);
+                statusDiv.innerText = "Statut: Connecté. 🎤 Vous pouvez parler.";
+                connectBtn.innerText = "🔌 Raccrocher";
+
+            } catch (e) {
+                statusDiv.innerText = "Erreur: " + e.message;
+            }
+        };
+
+        transferBtn.onclick = async () => {
+            if (!targetService || !room) return;
+            await room.disconnect();
+            statusDiv.innerText = `Transfert vers ${targetService}...`;
+
+            // Rejoindre la room dédiée au service
+            const newRoomName = `accueil-${targetService}`;
+            const res = await fetch(`/token?participant_name=caller&room_name=${newRoomName}`);
+            const data = await res.json();
+
+            room = new LivekitClient.Room();
+            room.on('trackSubscribed', (track, pub, participant) => {
+                if (track.kind === LivekitClient.Track.Kind.Audio) {
+                    track.attach(remoteAudio);
+                }
+            });
+            room.on('participantConnected', participant => {
+                statusDiv.innerText += `\n👤 Collaborateur ${participant.identity} connecté !`;
+                transferBanner.style.display = 'none';
+            });
+
+            const wsUrl = `ws://${window.location.hostname}:7880`;
+            await room.connect(wsUrl, data.token);
+            await room.localParticipant.setMicrophoneEnabled(true);
+            statusDiv.innerText += `\n✅ Connecté au service ${targetService}. En attente du collaborateur.`;
+        };
+
+        function resetUI() {
+            statusDiv.innerText = "Statut: Déconnecté";
+            connectBtn.innerText = "📞 Appeler l'accueil";
+            transferBanner.style.display = 'none';
+            targetService = null;
+        }
+    </script>
+</body>
+</html>
