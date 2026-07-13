@@ -209,7 +209,7 @@ de cette forme exacte :
   "reponse": "Ce que tu dis à l'appelant, à voix haute.",
   "etat": "ACCUEIL|FAQ|MESSAGE|QUALIFICATION|TRANSFERT|FIN",
   "fonction": {
-    "nom": "consulter_faq|enregistrer_message|qualifier_demande|transferer_appel|null",
+    "nom": "<UNE SEULE valeur parmi: consulter_faq, enregistrer_message, qualifier_demande, transferer_appel, ou null — jamais plusieurs, jamais séparées par |>",
     "args": {}
   },
   "donnees_collectees": {
@@ -223,6 +223,8 @@ de cette forme exacte :
 }
 
 ## Quand appeler quelle fonction
+IMPORTANT : N'appelle consulter_faq QUE si l'appelant pose une vraie question factuelle 
+(horaires, adresse, tarif...). Ne l'appelle JAMAIS pour une simple salutation comme "bonjour".
 - consulter_faq : quand l'appelant pose une question courante (horaires, adresse, tarif, etc.). \
 Args: {"question": "<la question de l'appelant>"}.
 - enregistrer_message : quand l'appelant veut laisser un message/rappel. \
@@ -233,6 +235,7 @@ Args: {"resume": "<résumé>", "service": "commercial|technique|administratif", 
 Args: {"service": "commercial|technique|administratif"}.
 
 Si aucune fonction n'est nécessaire pour ce tour, mets "fonction": {"nom": null}.
+IMPORTANT : le champ "nom" ne contient QU'UNE SEULE fonction à la fois, jamais une liste.
 
 ## Exemples
 
@@ -282,21 +285,30 @@ def parse_llm_response(raw: str) -> dict[str, Any]:
 
 
 def apply_extraction(ctx: CallContext, donnees: dict[str, Any]) -> None:
-    """Met à jour le contexte d'appel avec les données extraites par le LLM."""
     if not isinstance(donnees, dict):
         return
-    if donnees.get("nom_appelant"):
-        ctx.nom_appelant = donnees["nom_appelant"]
-    if donnees.get("numero"):
-        ctx.numero = donnees["numero"]
-    if donnees.get("motif"):
-        ctx.motif = donnees["motif"]
+
+    def _clean(v):
+        if isinstance(v, str) and v.strip().lower() in {"null", "none", ""}:
+            return None
+        return v
+
+    nom = _clean(donnees.get("nom_appelant"))
+    if nom:
+        ctx.nom_appelant = nom
+    numero = _clean(donnees.get("numero"))
+    if numero:
+        ctx.numero = numero
+    motif = _clean(donnees.get("motif"))
+    if motif:
+        ctx.motif = motif
     if donnees.get("urgence") in {"basse", "normale", "haute"}:
         ctx.urgence = donnees["urgence"]
     if donnees.get("service") in {"commercial", "technique", "administratif"}:
         ctx.service_cible = donnees["service"]
-    if donnees.get("resume_demande"):
-        ctx.resume_demande = donnees["resume_demande"]
+    resume = _clean(donnees.get("resume_demande"))
+    if resume:
+        ctx.resume_demande = resume
 
 
 def execute_function(ctx: CallContext, fonction: dict[str, Any]) -> dict[str, Any]:

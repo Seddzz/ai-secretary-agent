@@ -87,6 +87,7 @@
 
                 const wsUrl = `ws://${window.location.hostname}:7880`;
                 await room.connect(wsUrl, data.token);
+                await room.startAudio();
                 await room.localParticipant.setMicrophoneEnabled(true);
 
                 statusDiv.innerText = `Statut: Connecté au service ${serviceName} (room: ${roomName}).\n🎤 Micro activé. En attente d'appels transférés.`;

@@ -85,6 +85,8 @@
 
                 const wsUrl = `ws://${window.location.hostname}:7880`;
                 await room.connect(wsUrl, data.token);
+                await room.startAudio();
+                await room.localParticipant.setMicrophoneEnabled(true);
                 statusDiv.innerText = "Statut: Connecté. 🎤 Vous pouvez parler.";
                 connectBtn.innerText = "🔌 Raccrocher";
 

@@ -18,8 +18,14 @@ import whisper  # STT (local, CPU)
 from piper.voice import PiperVoice  # TTS (local, CPU)
 import importlib
 
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
 # Phase 4 — Logique conversationnelle (FAQ + machine d'états + function-calling)
-_conv = importlib.import_module("agent-core.conversation")
+_conv = importlib.import_module("agent_core.conversation")
 
 # Phase 7 — Persistance SQLite
 _db = importlib.import_module("db.models")
@@ -57,10 +63,10 @@ TTS_FRAME_SAMPLES = int(TTS_SAMPLE_RATE * TTS_FRAME_MS / 1000)  # 441 échantill
 # et on déclenche la transcription après une vraie pause de l'appelant.
 VAD_FRAME_MS = 30
 VAD_FRAME_SAMPLES = int(STT_SAMPLE_RATE * VAD_FRAME_MS / 1000)  # 480 échantillons @16kHz
-VAD_START_RMS = 400     # RMS minimum (int16) pour considérer qu'on commence à parler
+VAD_START_RMS = 500    # RMS minimum (int16) pour considérer qu'on commence à parler
 VAD_STOP_RMS = 250      # RMS maximum (int16) en-dessous duquel on considère le silence
 VAD_SILENCE_MS = 700    # durée de silence pour clôturer un énoncé
-VAD_MIN_SPEECH_MS = 250 # ignore les éclats < 250 ms (claquements, bruits)
+VAD_MIN_SPEECH_MS = 400 # ignore les éclats < 250 ms (claquements, bruits)
 VAD_MAX_UTTERANCE_S = 12  # tronque au-delà (évite OOM / hallucination Whisper)
 
 logger.info(f"Configuration loaded: LIVEKIT_URL={LIVEKIT_URL}, ROOM={ROOM_NAME}")
@@ -198,12 +204,11 @@ async def get_agent_turn(user_message: str, chat_history: list,
         # 3) Ajustement de la réponse selon le résultat de la fonction
         fn_name = fonction.get("nom") if isinstance(fonction, dict) else None
         if fn_name == "consulter_faq":
-            if not fn_result.get("reponse"):
-                # La FAQ n'a rien trouvé -> message de repli au lieu d'inventer
+            question_asked = (fonction.get("args") or {}).get("question", "").strip()
+            if question_asked and not fn_result.get("reponse"):
                 reply_text = ("Je n'ai pas cette information précise. "
-                              "Voulez-vous que je vous mette en relation avec un collaborateur ?")
-            else:
-                # On fait confiance à la réponse FAQ (source fiable) plutôt qu'au LLM
+                            "Voulez-vous que je vous mette en relation avec un collaborateur ?")
+            elif fn_result.get("reponse"):
                 reply_text = fn_result["reponse"]
                 if ctx.nom_appelant and ctx.faq_consultee is not None:
                     ctx.faq_consultee.append(fn_result.get("id", "?"))
@@ -300,6 +305,7 @@ async def main():
     call_start = datetime.now()
 
     active_audio_tasks: set[asyncio.Task] = set()
+    subscribed_participants: set[str] = set()
 
     # --- Phase 7 : Sauvegarde en base ---
     def _save_call(statut: str, transfere: bool = False) -> None:
@@ -528,6 +534,9 @@ async def main():
         - état SPEAKING → accumule ; si RMS < VAD_STOP_RMS pendant
           VAD_SILENCE_MS → termine l'énoncé et lance le pipeline
         Ignore les bruits courts (< VAD_MIN_SPEECH_MS).
+
+        Barge-in : on n'interrompt l'agent que si le frame captÃ© dépasse
+        VAD_START_RMS (vraie parole), jamais sur un simple souffle/silence.
         """
         nonlocal current_processing_task, current_tts_task, tts_stop_event
         if track.kind != rtc.TrackKind.KIND_AUDIO:
@@ -550,13 +559,12 @@ async def main():
         try:
             async for audio_event in stream:
                 frame = audio_event.frame
-
-                # --- Barge-in : on capte de l'audio pendant la réponse de l'agent ---
-                if is_speaking:
-                    await trigger_barge_in()
-
                 samples = np.frombuffer(frame.data, dtype=np.int16)
                 energy = _rms(samples)
+
+                # --- Barge-in : seulement si le frame ressemble à de la vraie parole ---
+                if is_speaking and energy >= VAD_START_RMS:
+                    await trigger_barge_in()
 
                 if not is_speaking_now:
                     # En attente de début de parole
@@ -582,18 +590,25 @@ async def main():
                                     f"silence={silence_ms}ms)"
                                 )
                                 concat = np.concatenate(utterance)
-                                # Tronque à max_samples par sécurité
                                 if concat.size > max_samples:
                                     concat = concat[:max_samples]
-                                # Annule tout processing/TTS en cours avant de lancer le nouveau
-                                if current_processing_task and not current_processing_task.done():
-                                    current_processing_task.cancel()
-                                if current_tts_task and not current_tts_task.done():
-                                    tts_stop_event and tts_stop_event.set()
-                                    current_tts_task.cancel()
-                                tts_source.clear_queue()
-                                # Lance le pipeline (TTS/LLM peuvent être interrompus par barge-in)
-                                current_processing_task = asyncio.create_task(process_utterance(concat))
+
+                                if is_speaking:
+                                    # Vrai barge-in : l'agent parlait, on interrompt tout.
+                                    if current_processing_task and not current_processing_task.done():
+                                        current_processing_task.cancel()
+                                    if current_tts_task and not current_tts_task.done():
+                                        tts_stop_event and tts_stop_event.set()
+                                        current_tts_task.cancel()
+                                    tts_source.clear_queue()
+                                    current_processing_task = asyncio.create_task(process_utterance(concat))
+                                elif current_processing_task is None or current_processing_task.done():
+                                    # Rien en cours : on lance normalement.
+                                    current_processing_task = asyncio.create_task(process_utterance(concat))
+                                else:
+                                    # STT/LLM déjà en cours pour un énoncé précédent : on laisse
+                                    # terminer plutôt que d'annuler à répétition.
+                                    logger.info("[VAD] Utterance ignorée — traitement précédent toujours en cours.")
                             else:
                                 logger.debug(f"[VAD] Discarded short burst ({speech_ms - silence_ms}ms)")
                             # Reset état
@@ -614,9 +629,14 @@ async def main():
     def start_audio_consumer(track: rtc.Track, participant: rtc.RemoteParticipant) -> None:
         if track.kind != rtc.TrackKind.KIND_AUDIO:
             return
+        if participant.identity in subscribed_participants:
+            logger.info(f"[Audio] Already consuming {participant.identity}, skipping duplicate.")
+            return
+        subscribed_participants.add(participant.identity)
         task = asyncio.create_task(consume_audio_track(track, participant))
         active_audio_tasks.add(task)
         task.add_done_callback(active_audio_tasks.discard)
+        task.add_done_callback(lambda t: subscribed_participants.discard(participant.identity))
 
     @room.on("participant_connected")
     def on_participant_connected(participant: rtc.RemoteParticipant):
